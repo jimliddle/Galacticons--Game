@@ -4,6 +4,9 @@ A fully self-contained, zero-dependency HTML5 arcade game paying homage to the c
 
 Playable entirely in the browser, this game recreates the authentic arcade cabinet experience using modern web technologies—no external images, sound files, or libraries required!
 
+<img width="518.5" height="721" alt="Galacticons screenshot" src="https://github.com/user-attachments/assets/e5cbb895-a4e3-4e7b-80f7-670fcac1c325" />
+
+
 # ✨ Features
 
 - 100% Procedural Pixel Art: All sprites (player, aliens, explosions) are generated dynamically using 2D canvas arrays. No external .png or .gif assets are used.
