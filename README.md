@@ -1,8 +1,12 @@
 # 👾 Retro Galacticons
 
-A fully self-contained, zero-dependency HTML5 arcade game paying homage to the classic space shooters of the 1980s.
+This is my go to vibe coded implementation to compare as to how well local models are able to solve the problem of re-creating an 80's classic arcase game in a single page web application. This was created using Gemini CLI.
+
+Galacticons is a fully self-contained, zero-dependency HTML5 arcade game paying homage to the classic space shooters of the 1980s.
 
 Playable entirely in the browser, this game recreates the authentic arcade cabinet experience using modern web technologies—no external images, sound files, or libraries required!
+
+Play it at: 
 
 <img width="518.5" height="721" alt="Galacticons screenshot" src="https://github.com/user-attachments/assets/e5cbb895-a4e3-4e7b-80f7-670fcac1c325" />
 
