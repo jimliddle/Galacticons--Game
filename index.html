@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Retro Galacticons</title>
+    <style>
+        :root {
+            --bg-color: #050505;
+            --cabinet-color: #1a1a24;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--bg-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            touch-action: none; /* Prevent pinch zoom and scroll on mobile */
+        }
+
+        /* Arcade Cabinet Wrapper */
+        #cabinet {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            height: 100%;
+            max-height: 800px;
+            background: var(--cabinet-color);
+            box-shadow: inset 0 0 50px rgba(0,0,0,0.8), 0 0 20px rgba(255,255,255,0.05);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-left: 4px solid #333;
+            border-right: 4px solid #333;
+        }
+
+        /* The Screen itself */
+        #screen-container {
+            position: relative;
+            width: 90%;
+            height: 90%;
+            background-color: #000;
+            overflow: hidden;
+            border-radius: 10px; /* Slight curvature of the tube */
+            box-shadow: 0 0 30px rgba(0,0,0,0.9) inset;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            /* Image rendering for crisp pixels */
+            image-rendering: pixelated;
+        }
+
+        /* CRT Effects Overlay */
+        .crt-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* Scanlines */
+        .scanlines {
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.2) 50%,
+                rgba(0,0,0,0.2)
+            );
+            background-size: 100% 4px;
+        }
+
+        /* CRT Flicker & RGB shift */
+        .crt-glass {
+            box-shadow: inset 0 0 60px rgba(0,0,0,0.8);
+            background: radial-gradient(circle at center, rgba(0,0,0,0) 60%, rgba(0,0,0,0.6) 100%);
+        }
+
+        .crt-glare {
+            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 40%);
+        }
+
+        /* UI Overlays */
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+            text-shadow: 2px 2px 0px #f00, -2px -2px 0px #0ff;
+            text-align: center;
+        }
+
+        .hidden { display: none !important; }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            letter-spacing: 4px;
+            color: #ffde00;
+            text-transform: uppercase;
+        }
+
+        p {
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+            color: #00ffff;
+        }
+
+        .blink {
+            animation: blinker 1s linear infinite;
+        }
+
+        @keyframes blinker {
+            50% { opacity: 0; }
+        }
+
+        /* Mobile Controls Hints */
+        #controls-hint {
+            position: absolute;
+            bottom: 20px;
+            font-size: 0.8rem;
+            color: #888;
+            text-shadow: none;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div id="cabinet">
+    <div id="screen-container">
+        <canvas id="gameCanvas" width="450" height="600"></canvas>
+        <div class="crt-overlay scanlines"></div>
+        <div class="crt-overlay crt-glass"></div>
+        <div class="crt-overlay crt-glare"></div>
+        
+        <div id="ui-layer">
+            <div id="start-screen">
+                <h1>GALACTICONS</h1>
+                <p>INSERT COIN</p>
+                <p class="blink">CLICK OR PRESS ANY KEY</p>
+                <div id="controls-hint">Arrow Keys / AD to Move. Space to Fire.<br>Mobile: Drag to Move. Auto-fire.</div>
+            </div>
+            
+            <div id="game-over-screen" class="hidden">
+                <h1 style="color: #ff0000;">GAME OVER</h1>
+                <p id="final-score">SCORE: 0</p>
+                <p class="blink">CLICK OR PRESS ANY KEY</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    /**
+     * RETRO GALACTICONS ENGINE
+     * Self-contained arcade engine using procedural graphics and Web Audio API.
+     */
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const uiLayer = document.getElementById('ui-layer');
+    const startScreen = document.getElementById('start-screen');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const finalScoreEl = document.getElementById('final-score');
+
+    // Game Constants
+    const GAME_WIDTH = canvas.width;
+    const GAME_HEIGHT = canvas.height;
+    const PIXEL_SIZE = 3;
+
+    // Game State
+    let gameState = 'START'; // START, PLAYING, GAMEOVER
+    let score = 0;
+    let highscore = 0;
+    let lives = 3;
+    let level = 1;
+    let frameCount = 0;
+    let lastTime = 0;
+
+    // Inputs
+    const keys = { ArrowLeft: false, ArrowRight: false, Space: false, a: false, d: false };
+    let touchX = null;
+    let isTouching = false;
+
+    // Audio Context (Initialized on user interaction)
+    let audioCtx = null;
+
+    // --- PROCEDURAL SPRITE GENERATION ---
+    // 0: transparent, 1: primary color, 2: secondary color, 3: tertiary
+    const spriteData = {
+        player: {
+            colors: [null, '#ffffff', '#ff0000', '#ffff00'],
+            data: [
+                [0,0,0,0,0,0,1,0,0,0,0,0,0],
+                [0,0,0,0,0,1,1,1,0,0,0,0,0],
+                [0,0,0,0,0,1,1,1,0,0,0,0,0],
+                [0,0,0,0,1,1,2,1,1,0,0,0,0],
+                [0,0,0,1,1,2,2,2,1,1,0,0,0],
+                [0,0,1,1,2,2,3,2,2,1,1,0,0],
+                [0,1,1,1,2,3,3,3,2,1,1,1,0],
+                [1,1,1,1,2,3,3,3,2,1,1,1,1],
+                [1,1,1,1,2,2,3,2,2,1,1,1,1],
+                [1,0,0,1,1,2,2,2,1,1,0,0,1],
+                [1,0,0,0,1,1,1,1,1,0,0,0,1]
+            ]
+        },
+        alienBlue: {
+            colors: [null, '#00ffff', '#0000ff'],
+            frames: [
+                [
+                    [0,0,0,1,0,0,0,1,0,0,0],
+                    [0,0,0,1,0,0,0,1,0,0,0],
+                    [0,0,1,1,1,1,1,1,1,0,0],
+                    [0,1,1,2,1,1,1,2,1,1,0],
+                    [1,1,1,1,1,1,1,1,1,1,1],
+                    [1,0,1,1,1,1,1,1,1,0,1],
+                    [1,0,1,0,0,0,0,0,1,0,1],
+                    [0,0,0,1,1,0,1,1,0,0,0]
+                ],
+                [
+                    [0,0,0,0,1,0,1,0,0,0,0],
+                    [0,0,0,1,1,0,1,1,0,0,0],
+                    [0,0,1,1,1,1,1,1,1,0,0],
+                    [0,1,1,2,1,1,1,2,1,1,0],
+                    [1,1,1,1,1,1,1,1,1,1,1],
+                    [1,0,1,1,1,1,1,1,1,0,1],
+                    [0,1,0,0,0,0,0,0,0,1,0],
+                    [0,1,1,0,0,0,0,0,1,1,0]
+                ]
+            ]
+        },
+        alienPurple: {
+            colors: [null, '#ff00ff', '#00ffff'],
+            frames: [
+                [
+                    [0,0,0,0,1,0,1,0,0,0,0],
+                    [0,0,0,1,1,0,1,1,0,0,0],
+                    [0,0,1,1,1,1,1,1,1,0,0],
+                    [0,1,1,2,1,1,1,2,1,1,0],
+                    [1,1,1,1,1,1,1,1,1,1,1],
+                    [1,0,1,1,1,1,1,1,1,0,1],
+                    [1,0,0,1,0,0,0,1,0,0,1],
+                    [0,1,1,0,0,0,0,0,1,1,0]
+                ],
+                [
+                    [0,0,0,1,0,0,0,1,0,0,0],
+                    [0,0,1,1,0,0,0,1,1,0,0],
+                    [0,0,1,1,1,1,1,1,1,0,0],
+                    [0,1,1,2,1,1,1,2,1,1,0],
+                    [1,1,1,1,1,1,1,1,1,1,1],
+                    [1,0,1,1,1,1,1,1,1,0,1],
+                    [1,0,1,0,0,0,0,0,1,0,1],
+                    [0,0,0,1,1,0,1,1,0,0,0]
+                ]
+            ]
+        },
+        alienRed: {
+            colors: [null, '#ff0000', '#ffff00'],
+            frames: [
+                [
+                    [0,0,0,1,1,0,1,1,0,0,0],
+                    [0,0,1,1,1,0,1,1,1,0,0],
+                    [0,1,1,1,1,1,1,1,1,1,0],
+                    [1,1,2,2,1,1,1,2,2,1,1],
+                    [1,1,1,1,1,1,1,1,1,1,1],
+                    [1,1,1,1,1,1,1,1,1,1,1],
+                    [1,0,1,0,0,0,0,0,1,0,1],
+                    [0,0,0,1,1,0,1,1,0,0,0]
+                ],
+                [
+                    [0,0,1,1,0,0,0,1,1,0,0],
+                    [0,1,1,1,0,0,0,1,1,1,0],
+                    [0,1,1,1,1,1,1,1,1,1,0],
+                    [1,1,2,2,1,1,1,2,2,1,1],
+                    [1,1,1,1,1,1,1,1,1,1,1],
+                    [1,1,1,1,1,1,1,1,1,1,1],
+                    [0,1,0,0,0,0,0,0,0,1,0],
+                    [0,1,1,0,0,0,0,0,1,1,0]
+                ]
+            ]
+        },
+        alienFlagship: {
+            colors: [null, '#ffff00', '#0000ff'],
+            frames: [
+                [
+                    [0,0,0,0,1,1,1,0,0,0,0],
+                    [0,0,0,1,1,1,1,1,0,0,0],
+                    [0,0,1,1,1,1,1,1,1,0,0],
+                    [0,1,1,2,2,1,2,2,1,1,0],
+                    [1,1,1,1,1,1,1,1,1,1,1],
+                    [1,0,1,1,1,1,1,1,1,0,1],
+                    [1,0,1,0,0,0,0,0,1,0,1],
+                    [0,0,0,1,1,0,1,1,0,0,0]
+                ],
+                [
+                    [0,0,0,0,1,1,1,0,0,0,0],
+                    [0,0,0,1,1,1,1,1,0,0,0],
+                    [0,0,1,1,1,1,1,1,1,0,0],
+                    [0,1,1,2,2,1,2,2,1,1,0],
+                    [1,1,1,1,1,1,1,1,1,1,1],
+                    [0,1,1,1,1,1,1,1,1,1,0],
+                    [0,1,0,0,0,0,0,0,0,1,0],
+                    [0,1,1,0,0,0,0,0,1,1,0]
+                ]
+            ]
+        },
+        alienBoss: {
+            colors: [null, '#ff0000', '#ff8800', '#ffffff'],
+            frames: [
+                [
+                    [0,0,0,0,0,1,1,1,1,1,1,1,0,0,0,0,0],
+                    [0,0,0,0,1,1,2,2,2,2,2,1,1,0,0,0,0],
+                    [0,0,0,1,1,2,2,2,2,2,2,2,1,1,0,0,0],
+                    [0,0,1,1,2,2,3,3,3,3,3,2,2,1,1,0,0],
+                    [0,1,1,2,2,3,3,1,1,1,3,3,2,2,1,1,0],
+                    [1,1,2,2,3,3,1,1,0,1,1,3,3,2,2,1,1],
+                    [1,2,2,3,3,1,1,0,0,0,1,1,3,3,2,2,1],
+                    [1,2,2,3,3,1,1,0,0,0,1,1,3,3,2,2,1],
+                    [1,1,2,2,3,3,1,1,0,1,1,3,3,2,2,1,1],
+                    [0,1,1,2,2,3,3,1,1,1,3,3,2,2,1,1,0],
+                    [0,0,1,1,1,2,2,2,2,2,2,2,1,1,1,0,0],
+                    [0,0,0,1,1,1,1,1,1,1,1,1,1,1,0,0,0],
+                    [0,0,0,0,1,0,1,0,0,0,1,0,1,0,0,0,0],
+                    [0,0,0,1,1,0,1,1,0,1,1,0,1,1,0,0,0]
+                ],
+                [
+                    [0,0,0,0,0,1,1,1,1,1,1,1,0,0,0,0,0],
+                    [0,0,0,0,1,1,2,2,2,2,2,1,1,0,0,0,0],
+                    [0,0,0,1,1,2,2,2,2,2,2,2,1,1,0,0,0],
+                    [0,0,1,1,2,2,3,3,3,3,3,2,2,1,1,0,0],
+                    [0,1,1,2,2,3,3,1,1,1,3,3,2,2,1,1,0],
+                    [1,1,2,2,3,3,1,1,0,1,1,3,3,2,2,1,1],
+                    [1,2,2,3,3,1,1,0,0,0,1,1,3,3,2,2,1],
+                    [1,2,2,3,3,1,1,0,0,0,1,1,3,3,2,2,1],
+                    [1,1,2,2,3,3,1,1,0,1,1,3,3,2,2,1,1],
+                    [0,1,1,2,2,3,3,1,1,1,3,3,2,2,1,1,0],
+                    [0,0,1,1,1,2,2,2,2,2,2,2,1,1,1,0,0],
+                    [0,0,0,1,1,1,1,1,1,1,1,1,1,1,0,0,0],
+                    [0,0,0,1,0,0,0,1,0,1,0,0,0,1,0,0,0],
+                    [0,0,1,1,0,0,0,1,0,1,0,0,0,1,1,0,0]
+                ]
+            ]
+        }
+    };
+
+    // Pre-render sprites to offscreen canvases for performance
+    const spriteCache = {};
+
+    function renderSprite(dataObj, frameIndex = null) {
+        const c = document.createElement('canvas');
+        const pixels = frameIndex !== null ? dataObj.frames[frameIndex] : dataObj.data;
+        c.width = pixels[0].length * PIXEL_SIZE;
+        c.height = pixels.length * PIXEL_SIZE;
+        const cx = c.getContext('2d');
+        
+        for (let y = 0; y < pixels.length; y++) {
+            for (let x = 0; x < pixels[y].length; x++) {
+                const colorIndex = pixels[y][x];
+                if (colorIndex > 0) {
+                    cx.fillStyle = dataObj.colors[colorIndex];
+                    cx.fillRect(x * PIXEL_SIZE, y * PIXEL_SIZE, PIXEL_SIZE, PIXEL_SIZE);
+                }
+            }
+        }
+        return c;
+    }
+
+    function initGraphics() {
+        spriteCache.player = renderSprite(spriteData.player);
+        spriteCache.alienBlue = [renderSprite(spriteData.alienBlue, 0), renderSprite(spriteData.alienBlue, 1)];
+        spriteCache.alienPurple = [renderSprite(spriteData.alienPurple, 0), renderSprite(spriteData.alienPurple, 1)];
+        spriteCache.alienRed = [renderSprite(spriteData.alienRed, 0), renderSprite(spriteData.alienRed, 1)];
+        spriteCache.alienFlagship = [renderSprite(spriteData.alienFlagship, 0), renderSprite(spriteData.alienFlagship, 1)];
+        spriteCache.alienBoss = [renderSprite(spriteData.alienBoss, 0), renderSprite(spriteData.alienBoss, 1)];
+    }
+
+    // --- AUDIO SYSTEM ---
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+    }
+
+    function playSound(type) {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        osc.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        const now = audioCtx.currentTime;
+
+        if (type === 'shoot') {
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(880, now);
+            osc.frequency.exponentialRampToValueAtTime(110, now + 0.15);
+            gainNode.gain.setValueAtTime(0.1, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+            osc.start(now);
+            osc.stop(now + 0.15);
+        } else if (type === 'explosion') {
+            // Pseudo-white noise using rapid frequency shifts on a square wave
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(100, now);
+            for(let i=0; i<10; i++) {
+                osc.frequency.setValueAtTime(Math.random() * 500 + 50, now + i*0.02);
+            }
+            gainNode.gain.setValueAtTime(0.2, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+            osc.start(now);
+            osc.stop(now + 0.2);
+        } else if (type === 'dive') {
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(200, now);
+            osc.frequency.linearRampToValueAtTime(400, now + 0.5);
+            osc.frequency.linearRampToValueAtTime(100, now + 1.0);
+            gainNode.gain.setValueAtTime(0.05, now);
+            gainNode.gain.linearRampToValueAtTime(0, now + 1.0);
+            osc.start(now);
+            osc.stop(now + 1.0);
+        } else if (type === 'alienDie') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(600, now);
+            osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
+            gainNode.gain.setValueAtTime(0.1, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            osc.start(now);
+            osc.stop(now + 0.1);
+        }
+    }
+
+    // --- GAME OBJECTS ---
+
+    // Starfield
+    class Starfield {
+        constructor() {
+            this.stars = [];
+            const colors = ['#ffffff', '#ff0000', '#00ff00', '#0000ff', '#ffff00'];
+            for (let i = 0; i < 100; i++) {
+                this.stars.push({
+                    x: Math.random() * GAME_WIDTH,
+                    y: Math.random() * GAME_HEIGHT,
+                    speed: Math.random() * 2 + 0.5,
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    blink: Math.random() > 0.5
+                });
+            }
+        }
+        update(dt) {
+            // Speed up stars based on level (slightly)
+            const speedMult = 1 + (level * 0.1);
+            this.stars.forEach(star => {
+                star.y += star.speed * speedMult * 60 * dt;
+                if (star.y > GAME_HEIGHT) {
+                    star.y = 0;
+                    star.x = Math.random() * GAME_WIDTH;
+                }
+            });
+        }
+        draw(ctx) {
+            this.stars.forEach(star => {
+                if (!star.blink || Math.random() > 0.1) {
+                    ctx.fillStyle = star.color;
+                    ctx.fillRect(star.x, star.y, 2, 2);
+                }
+            });
+        }
+    }
+
+    // Player
+    class Player {
+        constructor() {
+            this.sprite = spriteCache.player;
+            this.w = this.sprite.width;
+            this.h = this.sprite.height;
+            this.x = GAME_WIDTH / 2 - this.w / 2;
+            this.y = GAME_HEIGHT - this.h - 20;
+            this.speed = 200;
+            this.cooldown = 0;
+            this.isDead = false;
+            this.respawnTimer = 0;
+            this.invulnerableTimer = 0;
+        }
+
+        update(dt) {
+            if (this.isDead) {
+                this.respawnTimer -= dt;
+                if (this.respawnTimer <= 0) {
+                    this.isDead = false;
+                    this.x = GAME_WIDTH / 2 - this.w / 2;
+                    this.invulnerableTimer = 2.0; // 2 seconds of safety
+                }
+                return;
+            }
+
+            if (this.invulnerableTimer > 0) {
+                this.invulnerableTimer -= dt;
+            }
+
+            // Keyboard movement
+            if (keys.ArrowLeft || keys.a) this.x -= this.speed * dt;
+            if (keys.ArrowRight || keys.d) this.x += this.speed * dt;
+
+            // Touch movement (follow touch pos roughly)
+            if (isTouching && touchX !== null) {
+                const targetX = touchX - this.w / 2;
+                this.x += (targetX - this.x) * 10 * dt; 
+            }
+
+            // Clamping
+            if (this.x < 0) this.x = 0;
+            if (this.x > GAME_WIDTH - this.w) this.x = GAME_WIDTH - this.w;
+
+            // Firing
+            if (this.cooldown > 0) this.cooldown -= dt;
+            if ((keys.Space || isTouching) && this.cooldown <= 0) {
+                this.fire();
+            }
+        }
+
+        fire() {
+            // Only allow max 2 player bullets on screen like authentic arcade
+            const playerBulletCount = bullets.filter(b => b.isPlayer).length;
+            if (playerBulletCount < 2) {
+                bullets.push(new Bullet(this.x + this.w / 2 - 2, this.y, -400, '#ffff00', true));
+                playSound('shoot');
+                this.cooldown = 0.2; // 200ms cooldown
+            }
+        }
+
+        draw(ctx) {
+            if (!this.isDead) {
+                // Blinking effect when invulnerable
+                if (this.invulnerableTimer > 0 && Math.floor(this.invulnerableTimer * 15) % 2 === 0) {
+                    return; 
+                }
+                ctx.drawImage(this.sprite, this.x, this.y);
+            }
+        }
+
+        die() {
+            if (this.isDead) return;
+            playSound('explosion');
+            createExplosion(this.x + this.w/2, this.y + this.h/2, '#ff0000', 30);
+            this.isDead = true;
+            this.respawnTimer = 2.0;
+            lives--;
+            if (lives <= 0) {
+                setTimeout(() => setGameOver(), 1000);
+            }
+        }
+    }
+
+    // Bullets
+    class Bullet {
+        constructor(x, y, vy, color, isPlayer) {
+            this.x = x;
+            this.y = y;
+            this.w = 4;
+            this.h = 10;
+            this.vy = vy;
+            this.color = color;
+            this.isPlayer = isPlayer;
+            this.active = true;
+        }
+        update(dt) {
+            this.y += this.vy * dt;
+            if (this.y < 0 || this.y > GAME_HEIGHT) {
+                this.active = false;
+            }
+        }
+        draw(ctx) {
+            ctx.fillStyle = this.color;
+            ctx.fillRect(this.x, this.y, this.w, this.h);
+        }
+    }
+
+    // Aliens
+    class Alien {
+        constructor(type, gridX, gridY) {
+            this.type = type; // 'alienBlue', 'alienPurple', 'alienRed', 'alienFlagship', 'alienBoss'
+            this.sprites = spriteCache[type];
+            this.w = this.sprites[0].width;
+            this.h = this.sprites[0].height;
+            
+            // Grid target position (relative to formation center)
+            this.gridX = gridX;
+            this.gridY = gridY;
+            
+            // Actual screen position
+            this.x = 0;
+            this.y = 0;
+            
+            this.state = 'FORMATION'; // FORMATION, DIVING, RETURNING
+            this.diveTimer = 0;
+            this.startX = 0;
+            this.startY = 0;
+            
+            this.hp = type === 'alienBoss' ? 20 + (level * 2) : 1;
+            this.maxHp = this.hp;
+            this.scoreValue = type === 'alienBoss' ? 1000 : (type === 'alienFlagship' ? 60 : (type === 'alienRed' ? 50 : (type === 'alienPurple' ? 40 : 30)));
+            this.hitFlashTimer = 0;
+        }
+
+        update(dt, formationX, formationY) {
+            if (this.hitFlashTimer > 0) this.hitFlashTimer -= dt;
+
+            if (this.state === 'FORMATION') {
+                this.x = formationX + this.gridX;
+                this.y = formationY + this.gridY;
+                
+                // Boss occasionally shoots even while in formation
+                if (this.type === 'alienBoss' && Math.random() < 0.01 + (level * 0.001)) {
+                     bullets.push(new Bullet(this.x + this.w/2, this.y + this.h, 250, '#ff00ff', false));
+                }
+            } else if (this.state === 'DIVING') {
+                this.diveTimer += dt;
+                
+                // Parametric dive curve: sweep down, wobble x
+                const speedY = 150 + (level * 10);
+                this.y += speedY * dt;
+                
+                // Boss has a wider wobble
+                const wobble = this.type === 'alienBoss' ? 100 : 50;
+                this.x = this.startX + Math.sin(this.diveTimer * 3) * wobble;
+
+                // Random shooting while diving
+                let shootChance = this.type === 'alienBoss' ? 0.03 + (level * 0.005) : 0.01 + (level * 0.002);
+                if (Math.random() < shootChance) {
+                    bullets.push(new Bullet(this.x + this.w/2, this.y + this.h, 250, '#ff00ff', false));
+                    if (this.type === 'alienBoss') {
+                        // Boss fires a 3-way spread
+                        bullets.push(new Bullet(this.x + this.w/2 - 15, this.y + this.h, 250, '#ff00ff', false));
+                        bullets.push(new Bullet(this.x + this.w/2 + 15, this.y + this.h, 250, '#ff00ff', false));
+                    }
+                }
+
+                // If off bottom of screen, start returning
+                if (this.y > GAME_HEIGHT + 50) {
+                    this.state = 'RETURNING';
+                    this.y = -50;
+                    this.x = formationX + this.gridX; // Realign X immediately for simple return
+                }
+            } else if (this.state === 'RETURNING') {
+                // Move back down to formation position
+                const targetX = formationX + this.gridX;
+                const targetY = formationY + this.gridY;
+                
+                // Simple lerp back to position
+                this.x += (targetX - this.x) * 5 * dt;
+                this.y += (targetY - this.y) * 5 * dt;
+
+                if (Math.abs(this.y - targetY) < 5 && Math.abs(this.x - targetX) < 5) {
+                    this.state = 'FORMATION';
+                }
+            }
+        }
+
+        draw(ctx, frame) {
+            // Flicker effect when taking damage
+            if (this.hitFlashTimer > 0 && Math.floor(this.hitFlashTimer * 30) % 2 === 0) {
+                // skip drawing this frame to simulate authentic arcade hit flicker
+            } else {
+                ctx.drawImage(this.sprites[frame], this.x, this.y);
+            }
+            
+            // Draw Boss HP Bar
+            if (this.type === 'alienBoss') {
+                ctx.fillStyle = '#ff0000';
+                ctx.fillRect(this.x, this.y - 8, this.w, 4);
+                ctx.fillStyle = '#00ff00';
+                ctx.fillRect(this.x, this.y - 8, this.w * (this.hp / this.maxHp), 4);
+            }
+        }
+
+        startDive() {
+            if (this.state === 'FORMATION') {
+                this.state = 'DIVING';
+                this.diveTimer = 0;
+                this.startX = this.x;
+                this.startY = this.y;
+                playSound('dive');
+            }
+        }
+    }
+
+    // Particle System (Explosions)
+    class Particle {
+        constructor(x, y, color) {
+            this.x = x;
+            this.y = y;
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 100 + 50;
+            this.vx = Math.cos(angle) * speed;
+            this.vy = Math.sin(angle) * speed;
+            this.color = color;
+            this.life = 1.0; // 1 second
+            this.decay = Math.random() * 1 + 1;
+            this.size = Math.random() * 3 + 1;
+        }
+        update(dt) {
+            this.x += this.vx * dt;
+            this.y += this.vy * dt;
+            this.life -= this.decay * dt;
+        }
+        draw(ctx) {
+            ctx.fillStyle = this.color;
+            ctx.globalAlpha = this.life;
+            ctx.fillRect(this.x, this.y, this.size, this.size);
+            ctx.globalAlpha = 1.0;
+        }
+    }
+
+    // --- GLOBALS & MANAGERS ---
+    let starfield;
+    let player;
+    let bullets = [];
+    let aliens = [];
+    let particles = [];
+    
+    // Formation parameters
+    let formDir = 1;
+    let formX = GAME_WIDTH / 2;
+    let formY = 80;
+
+    function createExplosion(x, y, color, count=15) {
+        for(let i=0; i<count; i++) {
+            particles.push(new Particle(x, y, color));
+        }
+    }
+
+    function buildFormation() {
+        aliens = [];
+        formX = GAME_WIDTH / 2 - 100;
+        formY = 50 + (level * 5); // Start lower on higher levels
+        
+        if (level % 5 === 0) {
+            // --- BOSS STAGE ---
+            formX = GAME_WIDTH / 2; // Adjust center point for boss formation
+            
+            // The Boss
+            aliens.push(new Alien('alienBoss', -12, 0)); // Center it roughly
+            
+            // Royal Guards
+            aliens.push(new Alien('alienFlagship', -80, 20));
+            aliens.push(new Alien('alienFlagship', 60, 20));
+            
+            aliens.push(new Alien('alienRed', -120, 60));
+            aliens.push(new Alien('alienRed', -40, 60));
+            aliens.push(new Alien('alienRed', 40, 60));
+            aliens.push(new Alien('alienRed', 120, 60));
+            
+        } else {
+            // --- REGULAR STAGE ---
+            const rows = [
+                { type: 'alienFlagship', count: 2, yOffset: 0, spacing: 40 },
+                { type: 'alienRed', count: 6, yOffset: 30, spacing: 30 },
+                { type: 'alienPurple', count: 8, yOffset: 60, spacing: 30 },
+                { type: 'alienBlue', count: 10, yOffset: 90, spacing: 25 },
+                { type: 'alienBlue', count: 10, yOffset: 120, spacing: 25 }
+            ];
+
+            rows.forEach(row => {
+                const totalWidth = (row.count - 1) * row.spacing;
+                const startX = -totalWidth / 2;
+                for (let i = 0; i < row.count; i++) {
+                    aliens.push(new Alien(row.type, startX + i * row.spacing, row.yOffset));
+                }
+            });
+        }
+    }
+
+    // --- COLLISION ---
+    function checkCollisions() {
+        // Player Bullets vs Aliens
+        for (let i = bullets.length - 1; i >= 0; i--) {
+            let b = bullets[i];
+            if (!b.isPlayer) continue;
+
+            for (let j = aliens.length - 1; j >= 0; j--) {
+                let a = aliens[j];
+                if (b.x < a.x + a.w && b.x + b.w > a.x &&
+                    b.y < a.y + a.h && b.y + b.h > a.y) {
+                    
+                    // Hit!
+                    a.hp -= 1;
+                    b.active = false;
+                    
+                    if (a.hp <= 0) {
+                        score += a.state === 'DIVING' ? a.scoreValue * 2 : a.scoreValue;
+                        
+                        if (a.type === 'alienBoss') {
+                            playSound('explosion');
+                            createExplosion(a.x + a.w/2, a.y + a.h/2, '#ffaa00', 40);
+                            createExplosion(a.x, a.y, '#ff0000', 20);
+                            createExplosion(a.x + a.w, a.y + a.h, '#ffffff', 20);
+                        } else {
+                            playSound('alienDie');
+                            createExplosion(a.x + a.w/2, a.y + a.h/2, a.sprites[0].width > 0 ? '#ffaa00' : '#ffffff');
+                        }
+                        
+                        aliens.splice(j, 1);
+                    } else {
+                        // Flash to indicate damage
+                        a.hitFlashTimer = 0.1; 
+                        playSound('alienDie'); 
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (player.isDead || player.invulnerableTimer > 0) return;
+
+        // Alien Bullets vs Player
+        for (let i = bullets.length - 1; i >= 0; i--) {
+            let b = bullets[i];
+            if (b.isPlayer) continue;
+
+            if (b.x < player.x + player.w && b.x + b.w > player.x &&
+                b.y < player.y + player.h && b.y + b.h > player.y) {
+                b.active = false;
+                player.die();
+            }
+        }
+
+        // Aliens vs Player
+        for (let i = 0; i < aliens.length; i++) {
+            let a = aliens[i];
+            if (a.x < player.x + player.w && a.x + a.w > player.x &&
+                a.y < player.y + player.h && a.y + a.h > player.y) {
+                player.die();
+                // Destroy alien too
+                createExplosion(a.x + a.w/2, a.y + a.h/2, '#ffaa00');
+                aliens.splice(i, 1);
+                break;
+            }
+        }
+    }
+
+    // --- MAIN GAME LOOP ---
+
+    function resetGame() {
+        score = 0;
+        lives = 3;
+        level = 1;
+        player = new Player();
+        bullets = [];
+        particles = [];
+        buildFormation();
+    }
+
+    function setGameOver() {
+        gameState = 'GAMEOVER';
+        uiLayer.classList.remove('hidden');
+        startScreen.classList.add('hidden');
+        gameOverScreen.classList.remove('hidden');
+        finalScoreEl.innerText = `SCORE: ${score}`;
+        if (score > highscore) highscore = score;
+    }
+
+    function startGame() {
+        initAudio();
+        resetGame();
+        gameState = 'PLAYING';
+        uiLayer.classList.add('hidden');
+    }
+
+    function update(dt) {
+        if (gameState !== 'PLAYING') return;
+
+        starfield.update(dt);
+        player.update(dt);
+
+        // Update Bullets
+        bullets.forEach(b => b.update(dt));
+        bullets = bullets.filter(b => b.active);
+
+        // Update Particles
+        particles.forEach(p => p.update(dt));
+        particles = particles.filter(p => p.life > 0);
+
+        // Formation movement
+        const formSpeed = 30 + (level * 5);
+        formX += formDir * formSpeed * dt;
+        
+        // Check formation boundaries loosely based on center
+        if (formX > GAME_WIDTH / 2 + 50) formDir = -1;
+        if (formX < GAME_WIDTH / 2 - 50) formDir = 1;
+
+        // Breathe animation for formation
+        formY = 50 + (level * 5) + Math.sin(frameCount * 0.05) * 10;
+
+        // Update Aliens
+        let aliensInFormation = 0;
+        aliens.forEach(a => {
+            a.update(dt, formX, formY);
+            if (a.state === 'FORMATION') aliensInFormation++;
+        });
+
+        // Trigger dives
+        if (aliensInFormation > 0 && Math.random() < 0.02 + (level * 0.005)) {
+            // Pick random alien in formation to dive
+            const formationAliens = aliens.filter(a => a.state === 'FORMATION');
+            if (formationAliens.length > 0) {
+                const diver = formationAliens[Math.floor(Math.random() * formationAliens.length)];
+                diver.startDive();
+            }
+        }
+
+        checkCollisions();
+
+        // Level complete
+        if (aliens.length === 0) {
+            level++;
+            bullets = [];
+            buildFormation();
+        }
+
+        frameCount++;
+    }
+
+    function draw() {
+        // Clear screen with very slight trail for CRT persistence effect
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+        // Add glow effect
+        ctx.shadowBlur = 4;
+        
+        starfield.draw(ctx);
+
+        if (gameState === 'PLAYING') {
+            // Animation frame toggle every 30 frames
+            const animFrame = Math.floor(frameCount / 30) % 2;
+
+            ctx.shadowColor = '#fff';
+            player.draw(ctx);
+
+            aliens.forEach(a => {
+                // Set shadow color based on alien type
+                ctx.shadowColor = a.sprites[0].width > 0 ? '#f0f' : '#0ff'; // Dummy logic for glow
+                a.draw(ctx, animFrame);
+            });
+
+            ctx.shadowBlur = 8;
+            bullets.forEach(b => {
+                ctx.shadowColor = b.color;
+                b.draw(ctx);
+            });
+
+            ctx.shadowBlur = 0;
+            particles.forEach(p => p.draw(ctx));
+
+            // Draw HUD
+            ctx.fillStyle = '#ff0000';
+            ctx.font = '20px Courier New';
+            ctx.textAlign = 'left';
+            ctx.fillText(`SCORE:${score}`, 10, 25);
+            ctx.textAlign = 'right';
+            ctx.fillText(`HIGH:${highscore}`, GAME_WIDTH - 10, 25);
+            
+            // Draw Lives
+            for(let i=0; i<lives; i++) {
+                ctx.drawImage(spriteCache.player, 10 + i * (player.w + 5), GAME_HEIGHT - player.h - 10);
+            }
+        }
+    }
+
+    function loop(timestamp) {
+        if (!lastTime) lastTime = timestamp;
+        const dt = (timestamp - lastTime) / 1000;
+        lastTime = timestamp;
+
+        // Cap dt to prevent massive jumps if tab is inactive
+        if (dt < 0.1) {
+            update(dt);
+            draw();
+        }
+        requestAnimationFrame(loop);
+    }
+
+    // --- INPUT HANDLING ---
+    
+    // Check for game start via any key, otherwise handle movement
+    window.addEventListener('keydown', e => {
+        if (gameState === 'START' || gameState === 'GAMEOVER') {
+            startGame();
+            return;
+        }
+        if (keys.hasOwnProperty(e.key)) keys[e.key] = true;
+        // Prevent default scrolling for space and arrows
+        if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].indexOf(e.code) > -1) {
+            e.preventDefault();
+        }
+    });
+
+    window.addEventListener('keyup', e => {
+        if (keys.hasOwnProperty(e.key)) keys[e.key] = false;
+    });
+
+    // Touch / Mouse controls to start game (attached to window to bypass pointer-events:none layer)
+    const handleInteract = (e) => {
+        if (gameState === 'START' || gameState === 'GAMEOVER') {
+            startGame();
+        }
+    };
+
+    window.addEventListener('mousedown', handleInteract);
+    window.addEventListener('touchstart', (e) => {
+        if (gameState === 'START' || gameState === 'GAMEOVER') {
+            e.preventDefault();
+            handleInteract(e);
+        }
+    }, {passive: false});
+
+    // Movement tracking for mouse interactions during play
+    canvas.addEventListener('mousedown', (e) => {
+        if (gameState !== 'PLAYING') return;
+        isTouching = true;
+        const rect = canvas.getBoundingClientRect();
+        touchX = (e.clientX - rect.left) * (canvas.width / rect.width);
+    });
+    
+    canvas.addEventListener('mousemove', (e) => {
+        if (isTouching && gameState === 'PLAYING') {
+            const rect = canvas.getBoundingClientRect();
+            touchX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        }
+    });
+    
+    window.addEventListener('mouseup', () => { isTouching = false; touchX = null; });
+
+    // Movement tracking for touch interactions during play
+    canvas.addEventListener('touchstart', (e) => {
+        if (gameState !== 'PLAYING') return;
+        e.preventDefault();
+        isTouching = true;
+        const rect = canvas.getBoundingClientRect();
+        touchX = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+    }, {passive: false});
+    
+    canvas.addEventListener('touchmove', (e) => {
+        if (gameState !== 'PLAYING') return;
+        e.preventDefault();
+        if (isTouching) {
+            const rect = canvas.getBoundingClientRect();
+            touchX = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+        }
+    }, {passive: false});
+    
+    window.addEventListener('touchend', () => { isTouching = false; touchX = null; });
+
+    // --- INITIALIZATION ---
+    initGraphics();
+    starfield = new Starfield();
+    
+    // Draw initial static screen
+    draw();
+    requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
